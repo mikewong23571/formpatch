@@ -1,6 +1,6 @@
 ---
 name: formpatch
-description: Inspect and edit Clojure source files with the `formpatch` CLI. Use by default whenever Codex needs to inspect, create, update, or delete code in `.clj`, `.cljc`, or `.cljs` files and the work can be expressed as whole top-level object edits. Use it to list top-level objects, insert new top-level forms, replace existing top-level forms, delete top-level forms, or explain the `snapshot` + `id` + `hash` workflow used by Formpatch. Prefer this skill over manual text patches for normal Clojure editing unless the task specifically requires zipper-level internal surgery or another specialized refactor tool.
+description: Inspect and edit Clojure source files with the `formpatch` CLI. Use by default whenever Codex needs to inspect, create, update, or delete code in `.clj`, `.cljc`, or `.cljs` files and the work can be expressed as whole top-level object edits. Use it to list top-level objects, fetch full objects, insert new top-level forms, replace existing top-level forms, delete top-level forms, or explain the `oid` + optional `rev` + optional `file_rev` workflow used by Formpatch. Prefer this skill over manual text patches for normal Clojure editing unless the task specifically requires zipper-level internal surgery or another specialized refactor tool.
 ---
 
 # Formpatch
@@ -9,20 +9,39 @@ description: Inspect and edit Clojure source files with the `formpatch` CLI. Use
 
 Use `formpatch` as the default path for normal Clojure editing. It is a fast Babashka CLI for top-level Clojure edits and treats a file as an ordered list of top-level objects. It supports:
 
-- `list`: inspect top-level objects
+- `list`: inspect top-level objects with truncated text previews
+- `get`: fetch one or more full top-level objects
 - `insert`: add one or more top-level objects before or after an anchor
 - `replace`: replace one or more contiguous top-level objects with zero or more new top-level objects
 
 Use whole-object rewrites. Do not try to patch inside a form with this skill.
 
+## Handle Model
+
+Each top-level object has:
+
+- `oid`: stable object identity that usually survives unrelated edits
+- `rev`: short hash of the current full object text
+- `file_rev`: short hash of the whole file
+
+Default behavior:
+
+- use `oid` to target an object
+- append `@rev` when you want object-level optimistic locking
+- pass `--file-rev` only when you need strict whole-file optimistic locking
+
+This means one `list` can often support multiple follow-up edits without re-listing, as long as the target object itself has not changed.
+
 ## Workflow
 
 1. Run `formpatch list --file <path>` and inspect the returned JSON.
-2. Pick the target object's `id` and `hash` from the current `snapshot`.
-3. Draft full replacement forms.
-4. Prefer `--dry-run --diff` before mutating.
-5. Run `insert` or `replace`.
-6. Re-run `list` after every successful mutation because the old `snapshot`, `id`, and `hash` are stale.
+2. Pick the target object's `oid`; keep `rev` when you want a write guard.
+3. If the preview is not enough to safely rewrite the full form, run `get` for the target objects.
+4. Draft full replacement forms.
+5. Prefer `--dry-run --diff` before mutating.
+6. Run `insert` or `replace`.
+7. Read the returned minimal mutation delta JSON and keep using the new `file_rev`, `touched`, `before`, and `after` handles instead of re-listing immediately.
+8. Re-run `list` only when you need fresh discovery context, more full objects, or the mutation result does not give enough anchors.
 
 ## Query
 
@@ -34,11 +53,21 @@ formpatch list --file src/foo/core.clj
 
 Interpret the response as:
 
-- `snapshot`: file version for the next mutation
-- `id`: top-level object index within that snapshot
-- `hash`: optimistic lock for that object
-- `text`: full source text of the object
+- `file_rev`: current file version
+- `oid`: stable object identity
+- `rev`: optimistic lock for that object
+- `index`: current position in the file
+- `text`: truncated preview text
+- `text_truncated`: whether the preview was truncated
 - `head` / `name`: best-effort metadata for display and selection
+
+Fetch one or more full objects:
+
+```bash
+formpatch get \
+  --file src/foo/core.clj \
+  --objects <oid>,<oid>@<rev>
+```
 
 ## Create
 
@@ -49,8 +78,7 @@ Insert after an object:
 ```bash
 formpatch insert \
   --file src/foo/core.clj \
-  --snapshot <snapshot> \
-  --after <id>:<hash> \
+  --after <oid>@<rev> \
   --dry-run \
   --diff <<'EOF'
 (defn helper-a
@@ -67,6 +95,15 @@ Remove `--dry-run --diff` to apply the edit.
 
 Use `--before` instead of `--after` when needed.
 
+Successful `insert` returns minimal delta JSON including:
+
+- `file_rev`
+- `touched`
+- `deleted`
+- `before`
+- `after`
+- optional `diff`
+
 ## Update
 
 Replace one object by rewriting the full form:
@@ -74,8 +111,7 @@ Replace one object by rewriting the full form:
 ```bash
 formpatch replace \
   --file src/foo/core.clj \
-  --snapshot <snapshot> \
-  --targets <id>:<hash> \
+  --targets <oid>@<rev> \
   --dry-run \
   --diff <<'EOF'
 (defn updated
@@ -86,7 +122,9 @@ EOF
 
 Replace one object with multiple objects by passing multiple top-level forms on `stdin`.
 
-Replace multiple objects only when the target ids are contiguous.
+Replace multiple objects only when the target objects are contiguous in the current file.
+
+If you need strict whole-file CAS, add `--file-rev <file_rev>`.
 
 ## Delete
 
@@ -95,19 +133,22 @@ Delete with `replace --empty`:
 ```bash
 formpatch replace \
   --file src/foo/core.clj \
-  --snapshot <snapshot> \
-  --targets <id>:<hash> \
+  --targets <oid>@<rev> \
   --empty
 ```
 
-Delete multiple objects only when the target ids are contiguous.
+Delete multiple objects only when the target objects are contiguous.
+
+Deletion returns the removed `oid`s in `deleted`.
 
 ## Guardrails
 
-- Treat `snapshot`, `id`, and `hash` as a short-lived handle. Re-query after each successful mutation.
+- Prefer `oid@rev` for writes. Bare `oid` is convenient, but it will not protect you from overwriting a changed target object.
+- Use `--file-rev` only when you truly need strict whole-file locking; otherwise it reduces handle longevity.
 - Start with this skill for ordinary Clojure editing. Escalate to lower-level `rewrite-clj` work only when whole-object replacement is not sufficient.
 - Keep edits at top-level object granularity. If only part of a function changes, still replace the full function.
 - Use `--dry-run --diff` before writing unless the change is trivial.
 - Pass raw top-level forms through `stdin`. Do not wrap replacement code in JSON strings.
 - Expect JSON on `stdout` for success and machine-readable JSON on `stderr` for failure.
-- Use the globally installed `formpatch` command by default. If it is unavailable, fall back to the repo-local entrypoint such as `./bin/formpatch` or `bb formpatch`.
+- After a mutation, prefer the returned `touched` / `before` / `after` handles over an immediate extra `list`.
+- When working inside this repository, prefer the repo-local entrypoint `./bin/formpatch`. Outside repo development, use the installed `formpatch` command when available.

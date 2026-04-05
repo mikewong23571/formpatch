@@ -1,5 +1,6 @@
 (ns formpatch-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing use-fixtures]]
             [formpatch.core :as sut]))
 
 (def ^:private sample-source
@@ -10,46 +11,89 @@
        "  x)\n\n"
        "(def beta 1)\n"))
 
+(defn- temp-dir
+  []
+  (.getCanonicalPath
+   (.toFile (java.nio.file.Files/createTempDirectory
+             "formpatch-test-"
+             (make-array java.nio.file.attribute.FileAttribute 0)))))
+
 (defn- temp-file
   [text]
-  (let [dir (.toFile (java.nio.file.Files/createTempDirectory
-                      "formpatch-test-"
-                      (make-array java.nio.file.attribute.FileAttribute 0)))
+  (let [dir (java.io.File. (temp-dir))
         file (java.io.File. dir "core.clj")]
     (spit file text)
     (.getCanonicalPath file)))
+
+(defn- with-temp-state-dir
+  [f]
+  (let [dir (temp-dir)
+        previous (System/getProperty "formpatch.state-dir")]
+    (System/setProperty "formpatch.state-dir" dir)
+    (try
+      (f)
+      (finally
+        (if previous
+          (System/setProperty "formpatch.state-dir" previous)
+          (System/clearProperty "formpatch.state-dir"))))))
+
+(use-fixtures :each with-temp-state-dir)
 
 (deftest list-objects-exposes-top-level-objects
   (let [path (temp-file sample-source)
         result (sut/list-objects path)]
     (is (= path (:file result)))
+    (is (re-matches #"[0-9a-f]{8}" (:file-rev result)))
     (is (= 3 (count (:objects result))))
     (is (= ["demo.core" "alpha" "beta"]
            (mapv :name (:objects result))))
     (is (= ";; header\n(ns demo.core)"
            (:text (first (:objects result)))))
-    (is (every? #(re-matches #"[0-9a-f]{8}" (:hash %))
+    (is (every? #(re-matches #"oid_[0-9a-f]{32}" (:oid %))
+                (:objects result)))
+    (is (every? #(re-matches #"[0-9a-f]{8}" (:rev %))
                 (:objects result)))))
 
-(deftest insert-objects-supports-multi-object-source
+(deftest get-objects-exposes-full-objects
   (let [path (temp-file sample-source)
-        {:keys [snapshot objects]} (sut/list-objects path)
-        anchor (second objects)
+        {:keys [file-rev objects]} (sut/list-objects path)
+        alpha (second objects)
+        beta (nth objects 2)
+        result (sut/get-objects
+                {:file path
+                 :file-rev file-rev
+                 :objects [{:oid (:oid alpha)}
+                           {:oid (:oid beta) :rev (:rev beta)}]})]
+    (is (= path (:file result)))
+    (is (= file-rev (:file-rev result)))
+    (is (= [alpha beta] (:objects result)))))
+
+(deftest insert-objects-preserves-untouched-oids
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (sut/list-objects path)
+        alpha (second objects)
+        beta (nth objects 2)
         result (sut/insert-objects!
                 {:file path
-                 :snapshot snapshot
-                 :anchor-id (:id anchor)
-                 :anchor-hash (:hash anchor)
+                 :anchor {:oid (:oid alpha) :rev (:rev alpha)}
                  :position :after
                  :new-source (str "(defn helper-a\n"
                                   "  []\n"
                                   "  :a)\n\n"
                                   "(defn helper-b\n"
                                   "  []\n"
-                                  "  :b)\n")})]
+                                  "  :b)\n")})
+        result-objects (:objects result)]
     (is (:changed? result))
     (is (= ["demo.core" "alpha" "helper-a" "helper-b" "beta"]
-           (mapv :name (:objects result))))
+           (mapv :name result-objects)))
+    (is (= ["helper-a" "helper-b"]
+           (mapv :name (:touched result))))
+    (is (= [] (:deleted result)))
+    (is (= (:oid alpha) (:oid (:before result))))
+    (is (= (:oid beta) (:oid (:after result))))
+    (is (= (:oid alpha) (:oid (second result-objects))))
+    (is (= (:oid beta) (:oid (last result-objects))))
     (is (= (str ";; header\n"
                 "(ns demo.core)\n\n"
                 "(defn alpha\n"
@@ -64,15 +108,40 @@
                 "(def beta 1)\n")
            (slurp path)))))
 
-(deftest replace-objects-supports-split-delete-and-snapshot-validation
+(deftest handles-survive-external-insertions
   (let [path (temp-file sample-source)
-        {:keys [snapshot objects]} (sut/list-objects path)
-        target (second objects)
+        {:keys [objects]} (sut/list-objects path)
+        beta (nth objects 2)]
+    (spit path
+          (str ";; header\n"
+               "(ns demo.core)\n\n"
+               "(defn alpha\n"
+               "  [x]\n"
+               "  x)\n\n"
+               "(def helper :ok)\n\n"
+               "(def beta 1)\n"))
+    (let [result (sut/replace-objects!
+                  {:file path
+                   :targets [{:oid (:oid beta) :rev (:rev beta)}]
+                   :new-source "(def beta 2)\n"})]
+      (is (:changed? result))
+      (is (= ["demo.core" "alpha" "helper" "beta"]
+             (mapv :name (:objects result))))
+      (is (= ["beta"]
+             (mapv :name (:touched result))))
+      (is (= [] (:deleted result)))
+      (is (= (:oid beta)
+             (:oid (last (:objects result)))))
+      (is (str/includes? (slurp path) "(def beta 2)")))))
+
+(deftest replace-supports-split-merge-delete-and-no-op
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (sut/list-objects path)
+        alpha (second objects)
+        beta (nth objects 2)
         split-result (sut/replace-objects!
                       {:file path
-                       :snapshot snapshot
-                       :targets [{:id (:id target)
-                                  :hash (:hash target)}]
+                       :targets [{:oid (:oid alpha) :rev (:rev alpha)}]
                        :new-source (str "(defn helper\n"
                                         "  [x]\n"
                                         "  (inc x))\n\n"
@@ -81,39 +150,44 @@
                                         "  (helper x))\n")})]
     (is (= ["demo.core" "helper" "alpha" "beta"]
            (mapv :name (:objects split-result))))
-    (let [{:keys [snapshot objects]} (sut/list-objects path)
-          beta (last objects)
-          delete-result (sut/replace-objects!
-                         {:file path
-                          :snapshot snapshot
-                          :targets [{:id (:id beta)
-                                     :hash (:hash beta)}]
-                          :empty? true})]
-      (is (= ["demo.core" "helper" "alpha"]
-             (mapv :name (:objects delete-result)))))
-    (testing "stale snapshots are rejected"
-      (let [error (try
-                    (sut/replace-objects!
+    (let [helper (second (:objects split-result))
+          alpha' (nth (:objects split-result) 2)
+          beta' (nth (:objects split-result) 3)
+          merged (sut/replace-objects!
+                  {:file path
+                   :targets [{:oid (:oid alpha') :rev (:rev alpha')}
+                             {:oid (:oid beta') :rev (:rev beta')}]
+                   :new-source "(defn alpha+beta [] {:alpha true :beta 1})\n"})]
+      (is (:changed? merged))
+      (is (= ["demo.core" "helper" "alpha+beta"]
+             (mapv :name (:objects merged))))
+      (let [helper' (second (:objects merged))
+            merged-object (nth (:objects merged) 2)
+            no-op (sut/replace-objects!
+                   {:file path
+                    :targets [{:oid (:oid merged-object) :rev (:rev merged-object)}]
+                    :new-source (:text merged-object)})
+            file-after-no-op (slurp path)
+            deleted (sut/replace-objects!
                      {:file path
-                      :snapshot snapshot
-                      :targets [{:id (:id target)
-                                 :hash (:hash target)}]
-                      :empty? true})
-                    nil
-                    (catch clojure.lang.ExceptionInfo ex
-                      (ex-data ex)))]
-        (is (= :snapshot-mismatch (:error error)))))))
+                      :targets [{:oid (:oid helper') :rev (:rev helper')}]
+                      :empty? true})]
+        (is (false? (:changed? no-op)))
+        (is (= file-after-no-op (:after-text no-op)))
+        (is (= [] (:deleted no-op)))
+        (is (= [(:oid helper')]
+               (:deleted deleted)))
+        (is (= ["demo.core" "alpha+beta"]
+               (mapv :name (:objects deleted))))))))
 
 (deftest insert-dry-run-keeps-file-unchanged
   (let [path (temp-file sample-source)
         original (slurp path)
-        {:keys [snapshot objects]} (sut/list-objects path)
+        {:keys [objects]} (sut/list-objects path)
         anchor (first objects)
         result (sut/insert-objects!
                 {:file path
-                 :snapshot snapshot
-                 :anchor-id (:id anchor)
-                 :anchor-hash (:hash anchor)
+                 :anchor {:oid (:oid anchor) :rev (:rev anchor)}
                  :position :before
                  :dry-run? true
                  :new-source "(def prepended true)\n"})]
@@ -122,44 +196,61 @@
            (mapv :name (:objects result))))
     (is (= original (slurp path)))))
 
-(deftest replace-validates-hashes-target-ranges-and-new-source
+(deftest replace-validates-revs-file-revs-ranges-and-new-source
   (let [path (temp-file sample-source)
-        {:keys [snapshot objects]} (sut/list-objects path)
+        {:keys [file-rev objects]} (sut/list-objects path)
+        ns-object (first objects)
         alpha (second objects)
         beta (nth objects 2)]
-    (testing "hash mismatches are rejected"
+    (sut/replace-objects!
+     {:file path
+      :targets [{:oid (:oid alpha)}]
+      :new-source "(defn alpha [x] (inc x))\n"})
+    (testing "object rev mismatches are rejected"
       (let [error (try
                     (sut/replace-objects!
                      {:file path
-                      :snapshot snapshot
-                      :targets [{:id (:id alpha)
-                                 :hash "deadbeef"}]
+                      :targets [{:oid (:oid alpha) :rev (:rev alpha)}]
                       :empty? true})
                     nil
                     (catch clojure.lang.ExceptionInfo ex
                       (ex-data ex)))]
-        (is (= :object-hash-mismatch (:error error)))))
-    (testing "non-contiguous target ranges are rejected"
-      (let [error (try
+        (is (= :object-rev-mismatch (:error error)))))
+    (testing "strict file rev mismatches are rejected"
+      (let [current-beta (->> (:objects (sut/list-objects path))
+                              (filter #(= "beta" (:name %)))
+                              first)
+            error (try
                     (sut/replace-objects!
                      {:file path
-                      :snapshot snapshot
-                      :targets [{:id 0
-                                 :hash (:hash (first objects))}
-                                {:id (:id beta)
-                                 :hash (:hash beta)}]
+                      :file-rev file-rev
+                      :targets [{:oid (:oid current-beta) :rev (:rev current-beta)}]
+                      :empty? true})
+                    nil
+                    (catch clojure.lang.ExceptionInfo ex
+                      (ex-data ex)))]
+        (is (= :file-rev-mismatch (:error error)))))
+    (testing "non-contiguous target ranges are rejected"
+      (let [current-objects (:objects (sut/list-objects path))
+            current-beta (last current-objects)
+            error (try
+                    (sut/replace-objects!
+                     {:file path
+                      :targets [{:oid (:oid ns-object) :rev (:rev ns-object)}
+                                {:oid (:oid current-beta) :rev (:rev current-beta)}]
                       :empty? true})
                     nil
                     (catch clojure.lang.ExceptionInfo ex
                       (ex-data ex)))]
         (is (= :non-contiguous-targets (:error error)))))
     (testing "invalid replacement source is rejected"
-      (let [error (try
+      (let [current-alpha (->> (:objects (sut/list-objects path))
+                               (filter #(= "alpha" (:name %)))
+                               first)
+            error (try
                     (sut/replace-objects!
                      {:file path
-                      :snapshot snapshot
-                      :targets [{:id (:id alpha)
-                                 :hash (:hash alpha)}]
+                      :targets [{:oid (:oid current-alpha)}]
                       :new-source "(defn broken [x]\n  (+ x 1)\n"})
                     nil
                     (catch clojure.lang.ExceptionInfo ex
@@ -188,42 +279,14 @@
     (is (= :file-not-found (:error error)))
     (is (= missing (:file error)))))
 
-(deftest replace-can-merge-objects-and-detect-no-op
-  (let [path (temp-file sample-source)
-        {:keys [snapshot objects]} (sut/list-objects path)
-        alpha (second objects)
-        beta (nth objects 2)
-        merged (sut/replace-objects!
-                {:file path
-                 :snapshot snapshot
-                 :targets [{:id (:id alpha) :hash (:hash alpha)}
-                           {:id (:id beta) :hash (:hash beta)}]
-                 :new-source "(defn alpha+beta [] {:alpha true :beta 1})\n"})]
-    (is (:changed? merged))
-    (is (= ["demo.core" "alpha+beta"]
-           (mapv :name (:objects merged))))
-    (let [{:keys [snapshot objects]} (sut/list-objects path)
-          merged-object (second objects)
-          no-op (sut/replace-objects!
-                 {:file path
-                  :snapshot snapshot
-                  :targets [{:id (:id merged-object)
-                             :hash (:hash merged-object)}]
-                  :new-source (:text merged-object)})]
-      (is (false? (:changed? no-op)))
-      (is (= (slurp path)
-             (:after-text no-op))))))
-
 (deftest insert-rejects-invalid-position
   (let [path (temp-file sample-source)
-        {:keys [snapshot objects]} (sut/list-objects path)
+        {:keys [objects]} (sut/list-objects path)
         anchor (first objects)
         error (try
                 (sut/insert-objects!
                  {:file path
-                  :snapshot snapshot
-                  :anchor-id (:id anchor)
-                  :anchor-hash (:hash anchor)
+                  :anchor {:oid (:oid anchor)}
                   :position :middle
                   :new-source "(def bad true)\n"})
                 nil
@@ -233,11 +296,9 @@
 
 (deftest replace-rejects-empty-targets
   (let [path (temp-file sample-source)
-        {:keys [snapshot]} (sut/list-objects path)
         error (try
                 (sut/replace-objects!
                  {:file path
-                  :snapshot snapshot
                   :targets []
                   :empty? true})
                 nil

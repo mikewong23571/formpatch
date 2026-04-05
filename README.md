@@ -9,6 +9,22 @@ The tool is designed for AI agents. It exposes each file as an ordered list of t
 
 The runtime path is `babashka`, so normal CLI usage does not pay JVM startup cost. `rewrite-clj` is used for parsing and validation.
 
+## Handle Model
+
+Each top-level object has:
+
+- `oid`: stable object identity that survives ordinary edits
+- `rev`: short hash of the current full object text
+- `file_rev`: short hash of the whole file
+
+The default workflow is:
+
+- use `oid` to address an object
+- optionally add `@rev` to guard against overwriting a changed object
+- optionally pass `--file-rev` for strict whole-file optimistic locking
+
+This means one `list` can usually support multiple follow-up edits without re-listing, as long as the target object itself has not changed.
+
 ## Install As A bb Tool
 
 The project is packaged as a `bbin`-installable Babashka tool via [`bb.edn`](./bb.edn).
@@ -45,13 +61,20 @@ List top-level objects in a file:
 ./bin/formpatch list --file src/formpatch.clj
 ```
 
+Fetch one or more full objects by handle:
+
+```bash
+./bin/formpatch get \
+  --file src/formpatch.clj \
+  --objects oid_1234abcd5678ef901234abcd5678ef90,oid_abcdef0123456789abcdef0123456789@19ab7def
+```
+
 Insert objects after an anchor:
 
 ```bash
 ./bin/formpatch insert \
   --file src/formpatch.clj \
-  --snapshot abc12345 \
-  --after 1:19ab7def <<'EOF'
+  --after oid_1234abcd5678ef901234abcd5678ef90@19ab7def <<'EOF'
 (defn helper-a
   []
   :a)
@@ -67,8 +90,7 @@ Replace one object with multiple objects:
 ```bash
 ./bin/formpatch replace \
   --file src/formpatch.clj \
-  --snapshot abc12345 \
-  --targets 1:19ab7def <<'EOF'
+  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def <<'EOF'
 (defn helper
   [x]
   (inc x))
@@ -84,8 +106,7 @@ Delete objects without `stdin`:
 ```bash
 ./bin/formpatch replace \
   --file src/formpatch.clj \
-  --snapshot abc12345 \
-  --targets 3:52de7abc \
+  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def \
   --empty
 ```
 
@@ -94,8 +115,7 @@ Preview a mutation without writing:
 ```bash
 ./bin/formpatch replace \
   --file src/formpatch.clj \
-  --snapshot abc12345 \
-  --targets 1:19ab7def \
+  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def \
   --dry-run \
   --diff <<'EOF'
 (defn preview []
@@ -103,17 +123,43 @@ Preview a mutation without writing:
 EOF
 ```
 
+Enable strict whole-file locking when needed:
+
+```bash
+./bin/formpatch replace \
+  --file src/formpatch.clj \
+  --file-rev abc12345 \
+  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def \
+  --empty
+```
+
 ## Output
 
-All successful commands emit JSON on `stdout`.
+`list` emits JSON on `stdout`, but each object's `text` is truncated by default to reduce token usage.
 
-Object handles are short and snapshot-local:
+`get` emits JSON on `stdout` with the full object text for one or more objects.
 
-- `snapshot`: short file hash
-- `id`: top-level object index in that snapshot
-- `hash`: short hash of the object text
+`insert` and `replace` emit a minimal mutation delta JSON on `stdout`. The response includes:
 
-Every successful mutation returns a fresh snapshot and a fresh object list.
+- `file_rev`: the new file version
+- `touched`: the objects created or updated by the mutation
+- `deleted`: removed `oid`s
+- `before` / `after`: stable neighbor anchors around the changed span
+
+Use `--diff` when you also want a unified diff string embedded in the same JSON response.
+
+## Identity Store
+
+`formpatch` persists object identities in a small EDN sidecar store. By default it lives under:
+
+```text
+~/.cache/formpatch/state
+```
+
+You can override it with:
+
+- env var `FORMPATCH_STATE_DIR`
+- JVM property `formpatch.state-dir`
 
 ## Formatting Rules
 

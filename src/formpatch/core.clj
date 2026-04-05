@@ -1,11 +1,14 @@
 (ns formpatch.core
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
             [rewrite-clj.parser :as p]))
 
 (def ^:private trivia-tags
   #{:comma :newline :whitespace})
+
+(def ^:private identity-store-version 1)
 
 (defn- fail
   [error details]
@@ -24,6 +27,10 @@
 (defn- short-hash
   [s]
   (subs (sha1 s) 0 8))
+
+(defn- new-oid
+  []
+  (str "oid_" (str/replace (str (java.util.UUID/randomUUID)) "-" "")))
 
 (defn- safe-sexpr
   [node]
@@ -103,8 +110,8 @@
 
 (defn- fragment->object
   [idx {:keys [main-node text]}]
-  (merge {:id idx
-          :hash (short-hash text)
+  (merge {:index idx
+          :rev (short-hash text)
           :text text}
          (summarize-main-node main-node)))
 
@@ -125,52 +132,187 @@
       (fail :file-not-found {:file (canonical-path path)}))
     (slurp file)))
 
+(defn- identity-store-dir
+  []
+  (io/file (or (System/getenv "FORMPATCH_STATE_DIR")
+               (System/getProperty "formpatch.state-dir")
+               (str (System/getProperty "user.home") "/.cache/formpatch/state"))))
+
+(defn- identity-store-file
+  [file]
+  (io/file (identity-store-dir)
+           (str (sha1 file) ".edn")))
+
+(defn- ensure-parent-dir!
+  [file]
+  (let [parent (.getParentFile (io/file file))]
+    (when parent
+      (.mkdirs parent))))
+
+(defn- read-identity-store
+  [file]
+  (let [store-file (identity-store-file file)]
+    (when (.exists store-file)
+      (try
+        (let [store (edn/read-string (slurp store-file))]
+          (when-not (= identity-store-version (:version store))
+            (fail :identity-store-corrupt
+                  {:file file
+                   :state-file (.getCanonicalPath store-file)
+                   :message "Unsupported identity store version"}))
+          (when-not (= file (:file store))
+            (fail :identity-store-corrupt
+                  {:file file
+                   :state-file (.getCanonicalPath store-file)
+                   :message "Identity store path mismatch"}))
+          store)
+        (catch Throwable t
+          (fail :identity-store-corrupt
+                {:file file
+                 :state-file (.getCanonicalPath store-file)
+                 :message (.getMessage t)}))))))
+
+(defn- lcs-matches
+  [previous current]
+  (let [n (count previous)
+        m (count current)
+        table (vec (repeatedly (inc n) #(int-array (inc m))))]
+    (doseq [i (range (dec n) -1 -1)]
+      (let [row ^ints (nth table i)]
+        (doseq [j (range (dec m) -1 -1)]
+          (aset-int row
+                    j
+                    (if (= (:rev (nth previous i))
+                           (:rev (nth current j)))
+                      (inc (aget ^ints (nth table (inc i)) (inc j)))
+                      (max (aget ^ints (nth table (inc i)) j)
+                           (aget row (inc j))))))))
+    (loop [i 0
+           j 0
+           matches []]
+      (cond
+        (or (= i n) (= j m))
+        matches
+
+        (= (:rev (nth previous i)) (:rev (nth current j)))
+        (recur (inc i) (inc j) (conj matches [i j]))
+
+        (>= (aget ^ints (nth table (inc i)) j)
+            (aget ^ints (nth table i) (inc j)))
+        (recur (inc i) j matches)
+
+        :else
+        (recur i (inc j) matches)))))
+
+(defn- finalize-object
+  [idx object]
+  (let [text (trim-object-text (:text object))]
+    (-> object
+        (assoc :index idx
+               :oid (or (:oid object) (new-oid))
+               :rev (short-hash text)
+               :text text)
+        (select-keys [:oid :index :rev :text :readable? :head :name]))))
+
+(defn- finalize-objects
+  [objects]
+  (mapv finalize-object (range) objects))
+
+(defn- compact-object
+  [object]
+  (select-keys object [:oid :index :rev :head :name]))
+
+(defn- ensure-object-oids
+  [objects]
+  (mapv #(assoc % :oid (or (:oid %) (new-oid))) objects))
+
+(defn- attach-identities
+  [store objects]
+  (let [previous-objects (or (:objects store) [])
+        oid-by-index (into {}
+                           (map (fn [[previous-index current-index]]
+                                  [current-index (:oid (nth previous-objects previous-index))]))
+                           (lcs-matches previous-objects objects))]
+    (finalize-objects
+     (map-indexed (fn [idx object]
+                    (assoc object :oid (get oid-by-index idx)))
+                  objects))))
+
+(defn- write-identity-store!
+  [state]
+  (let [store-file (identity-store-file (:file state))
+        payload {:version identity-store-version
+                 :file (:file state)
+                 :file-rev (:file-rev state)
+                 :objects (mapv #(select-keys % [:oid :rev]) (:objects state))}]
+    (ensure-parent-dir! store-file)
+    (spit store-file (pr-str payload))))
+
 (defn- state-from-text
   [file text]
-  {:file (canonical-path file)
-   :snapshot (short-hash text)
-   :objects (objects-from-text text)
-   :text text})
+  (let [file' (canonical-path file)
+        objects (objects-from-text text)
+        state {:file file'
+               :file-rev (short-hash text)
+               :objects (attach-identities (read-identity-store file') objects)
+               :text text}]
+    state))
 
 (defn read-state
   [file]
-  (state-from-text file (read-file-text file)))
+  (let [state (state-from-text file (read-file-text file))]
+    (write-identity-store! state)
+    state))
 
 (defn list-objects
   [file]
   (dissoc (read-state file) :text))
 
-(defn- require-matching-snapshot!
-  [{:keys [snapshot] :as state} expected]
-  (when-not (= snapshot expected)
-    (fail :snapshot-mismatch
-          {:snapshot expected
-           :actual snapshot
-           :file (:file state)})))
+(defn- require-matching-file-rev!
+  [{:keys [file-rev file]} expected]
+  (when (and expected (not= file-rev expected))
+    (fail :file-rev-mismatch
+          {:file file
+           :expected expected
+           :actual file-rev})))
 
 (defn- require-object!
-  [state id]
-  (or (get (:objects state) id)
+  [state oid]
+  (or (some #(when (= (:oid %) oid) %) (:objects state))
       (fail :object-not-found
-            {:id id
+            {:oid oid
              :file (:file state)})))
 
-(defn- require-hash!
-  [state id expected]
-  (let [object (require-object! state id)]
-    (when-not (= (:hash object) expected)
-      (fail :object-hash-mismatch
-            {:id id
-             :expected expected
-             :actual (:hash object)
-             :file (:file state)}))
-    object))
+(defn- require-rev!
+  [state object expected]
+  (when (and expected (not= (:rev object) expected))
+    (fail :object-rev-mismatch
+          {:oid (:oid object)
+           :file (:file state)
+           :expected expected
+           :actual (:rev object)}))
+  object)
+
+(defn- require-handle!
+  [state {:keys [oid rev]}]
+  (let [object (require-object! state oid)]
+    (require-rev! state object rev)))
+
+(defn get-objects
+  [{:keys [file file-rev objects]}]
+  (let [state (read-state file)
+        resolved-objects (mapv #(require-handle! state %) objects)]
+    (require-matching-file-rev! state file-rev)
+    {:file (:file state)
+     :file-rev (:file-rev state)
+     :objects resolved-objects}))
 
 (defn- ensure-contiguous-targets!
   [targets]
-  (let [ids (mapv :id targets)]
-    (when-not (= ids (vec (range (first ids) (inc (last ids)))))
-      (fail :non-contiguous-targets {:targets targets}))))
+  (let [indexes (mapv :index targets)]
+    (when-not (= indexes (vec (range (first indexes) (inc (last indexes)))))
+      (fail :non-contiguous-targets
+            {:targets (mapv #(select-keys % [:oid :index]) targets)}))))
 
 (defn parse-stdin-objects
   [source]
@@ -181,57 +323,115 @@
       (fail :invalid-new-object
             {:message (.getMessage t)}))))
 
+(defn- shape-replacement-objects
+  [targets new-objects]
+  (cond
+    (empty? new-objects)
+    []
+
+    (= (count targets) (count new-objects))
+    (mapv (fn [target object]
+            (assoc object :oid (:oid target)))
+          targets
+          new-objects)
+
+    (= 1 (count targets) (count new-objects))
+    [(assoc (first new-objects) :oid (:oid (first targets)))]
+
+    :else
+    new-objects))
+
+(defn- object-by-oid
+  [objects oid]
+  (some #(when (= (:oid %) oid) %) objects))
+
+(defn- object-at-index
+  [objects idx]
+  (when (and (some? idx) (<= 0 idx) (< idx (count objects)))
+    (nth objects idx)))
+
+(defn- build-mutation-delta
+  [next-objects {:keys [touched-oids deleted-oids span-start span-count]}]
+  {:touched (mapv (comp compact-object #(object-by-oid next-objects %))
+                  touched-oids)
+   :deleted (vec deleted-oids)
+   :before (some-> (object-at-index next-objects (dec span-start))
+                   compact-object)
+   :after (some-> (object-at-index next-objects (+ span-start span-count))
+                  compact-object)})
+
 (defn- apply-edit
-  [{:keys [file snapshot dry-run?]} build-next]
+  [{:keys [file file-rev dry-run?]} build-next]
   (let [state (read-state file)]
-    (require-matching-snapshot! state snapshot)
-    (let [next-objects (build-next state)
+    (require-matching-file-rev! state file-rev)
+    (let [{:keys [objects delta]} (build-next state)
+          next-objects (finalize-objects objects)
           next-text (normalize-file-text next-objects)
           changed? (not= (:text state) next-text)
-          next-state (state-from-text file next-text)]
+          next-state {:file (:file state)
+                      :file-rev (short-hash next-text)
+                      :objects next-objects
+                      :text next-text}
+          mutation-delta (build-mutation-delta next-objects delta)]
       (when (and changed? (not dry-run?))
-        (spit file next-text))
+        (spit file next-text)
+        (write-identity-store! next-state))
       {:file (:file next-state)
-       :snapshot (:snapshot next-state)
+       :file-rev (:file-rev next-state)
        :changed? changed?
+       :touched (:touched mutation-delta)
+       :deleted (:deleted mutation-delta)
+       :before (:before mutation-delta)
+       :after (:after mutation-delta)
        :objects (:objects next-state)
        :before-text (:text state)
        :after-text next-text})))
 
 (defn insert-objects!
-  [{:keys [file snapshot anchor-id anchor-hash position new-source dry-run?] :as opts}]
-  (let [new-objects (parse-stdin-objects (or new-source ""))]
+  [{:keys [file file-rev anchor position new-source dry-run?] :as opts}]
+  (let [new-objects (ensure-object-oids (parse-stdin-objects (or new-source "")))]
     (apply-edit
-     (assoc opts :file file :snapshot snapshot :dry-run? dry-run?)
+     (assoc opts :file file :file-rev file-rev :dry-run? dry-run?)
      (fn [state]
-       (require-hash! state anchor-id anchor-hash)
-       (let [objects (:objects state)
+       (let [anchor-object (require-handle! state anchor)
+             objects (:objects state)
              split-at (case position
-                        :before anchor-id
-                        :after (inc anchor-id)
+                        :before (:index anchor-object)
+                        :after (inc (:index anchor-object))
                         (fail :invalid-position {:position position}))
              before (subvec objects 0 split-at)
-             after (subvec objects split-at)]
-         (into [] (concat before new-objects after)))))))
+             after (subvec objects split-at)
+             output (into [] (concat before new-objects after))]
+         {:objects output
+          :delta {:touched-oids (mapv :oid new-objects)
+                  :deleted-oids []
+                  :span-start split-at
+                  :span-count (count new-objects)}})))))
 
 (defn replace-objects!
-  [{:keys [file snapshot targets new-source dry-run?] :as opts}]
+  [{:keys [file file-rev targets new-source dry-run?] :as opts}]
   (let [delete? (:empty? opts)
         new-objects (if delete?
                       []
-                      (parse-stdin-objects (or new-source "")))]
+                      (ensure-object-oids (parse-stdin-objects (or new-source ""))))]
     (apply-edit
-     (assoc opts :file file :snapshot snapshot :dry-run? dry-run?)
+     (assoc opts :file file :file-rev file-rev :dry-run? dry-run?)
      (fn [state]
        (when (empty? targets)
          (fail :object-not-found {:targets [] :file (:file state)}))
-       (doseq [{:keys [id hash]} targets]
-         (require-hash! state id hash))
-       (let [sorted-targets (vec (sort-by :id targets))
-             _ (ensure-contiguous-targets! sorted-targets)
-             start-id (:id (first sorted-targets))
-             end-id (:id (last sorted-targets))
+       (let [resolved-targets (mapv #(require-handle! state %) targets)
+             sorted-targets (vec (sort-by :index resolved-targets))
+             replacement-objects (shape-replacement-objects sorted-targets new-objects)
+             start-index (:index (first sorted-targets))
+             end-index (:index (last sorted-targets))
              objects (:objects state)
-             before (subvec objects 0 start-id)
-             after (subvec objects (inc end-id))]
-         (into [] (concat before new-objects after)))))))
+             before (subvec objects 0 start-index)
+             after (subvec objects (inc end-index))
+             output (into [] (concat before replacement-objects after))]
+         (ensure-contiguous-targets! sorted-targets)
+         {:objects output
+          :delta {:touched-oids (mapv :oid replacement-objects)
+                  :deleted-oids (vec (remove (set (map :oid replacement-objects))
+                                             (map :oid sorted-targets)))
+                  :span-start start-index
+                  :span-count (count replacement-objects)}})))))

@@ -1,7 +1,6 @@
 (ns formpatch.cli
   (:require [babashka.process :as process]
             [cheshire.core :as json]
-            [clojure.java.io :as io]
             [clojure.string :as str]
             [formpatch.core :as core]))
 
@@ -10,14 +9,22 @@
    "\n"
    ["Usage:"
     "  formpatch list --file PATH"
-    "  formpatch insert --file PATH --snapshot SNAPSHOT (--before ID:HASH | --after ID:HASH) [--dry-run] [--diff] < forms.clj"
-    "  formpatch replace --file PATH --snapshot SNAPSHOT --targets ID:HASH[,ID:HASH...] [--empty] [--dry-run] [--diff] < forms.clj"
+   "  formpatch get --file PATH --objects OID[@REV][,OID[@REV]...] [--file-rev FILE_REV]"
+    "  formpatch insert --file PATH [--file-rev FILE_REV] (--before OID[@REV] | --after OID[@REV]) [--dry-run] [--diff] < forms.clj"
+    "  formpatch replace --file PATH [--file-rev FILE_REV] --targets OID[@REV][,OID[@REV]...] [--empty] [--dry-run] [--diff] < forms.clj"
     ""
     "Notes:"
+    "  - list emits JSON with truncated object text previews"
+    "  - get emits JSON with full object text for one or more objects"
+    "  - oid is the stable object identity; optional @rev guards against overwriting a changed object"
+    "  - --file-rev enables strict whole-file optimistic locking"
     "  - insert/replace read raw top-level forms from stdin"
+    "  - insert/replace emit a minimal mutation delta JSON on stdout"
+    "  - --diff includes a unified diff in the JSON response"
     "  - use --empty with replace to delete objects without stdin"
-    "  - all successful commands emit JSON on stdout"
     "  - failures emit JSON on stderr and exit non-zero"]))
+
+(def ^:private text-preview-limit 120)
 
 (defn- keyword->json-key
   [k]
@@ -47,23 +54,18 @@
 
 (defn- parse-handle
   [value]
-  (let [[id hash & more] (str/split value #":" 3)]
-    (when (or (seq more) (str/blank? id) (str/blank? hash))
+  (let [[oid rev & more] (str/split value #"@" 3)]
+    (when (or (seq more) (str/blank? oid))
       (throw (ex-info "Invalid handle"
                       {:error :invalid-handle
                        :value value})))
-    (try
-      {:id (Integer/parseInt id)
-       :hash hash}
-      (catch NumberFormatException _
-        (throw (ex-info "Invalid handle"
-                        {:error :invalid-handle
-                         :value value}))))))
+    {:oid oid
+     :rev (when-not (str/blank? rev) rev)}))
 
-(defn- parse-targets
+(defn- parse-handles
   [value]
   (when (str/blank? value)
-    (throw (ex-info "Missing targets"
+    (throw (ex-info "Missing handles"
                     {:error :invalid-handle
                      :value value})))
   (mapv parse-handle (str/split value #",")))
@@ -87,7 +89,7 @@
                     true)
              more)
 
-      (#{"--file" "--snapshot" "--before" "--after" "--targets"} arg)
+      (#{"--file" "--file-rev" "--before" "--after" "--targets" "--objects"} arg)
       (let [value (first more)]
         (when (nil? value)
           (throw (ex-info "Missing option value"
@@ -96,10 +98,11 @@
         (recur (assoc opts
                       (case arg
                         "--file" :file
-                        "--snapshot" :snapshot
+                        "--file-rev" :file-rev
                         "--before" :before
                         "--after" :after
-                        "--targets" :targets)
+                        "--targets" :targets
+                        "--objects" :objects)
                       value)
                (rest more)))
 
@@ -146,9 +149,32 @@
                       {:error :invalid-args
                        :option k}))))
 
+(defn- truncate-text
+  [text]
+  (if (> (count text) text-preview-limit)
+    {:text (str (subs text 0 text-preview-limit) "...")
+     :text-truncated? true}
+    {:text text
+     :text-truncated? false}))
+
+(defn- preview-object
+  [object]
+  (merge (dissoc object :text)
+         (truncate-text (:text object))))
+
 (defn- run-list
   [opts]
-  (core/list-objects (require-option opts :file)))
+  (update (core/list-objects (require-option opts :file))
+          :objects
+          (fn [objects]
+            (mapv preview-object objects))))
+
+(defn- run-get
+  [opts]
+  (core/get-objects
+   {:file (require-option opts :file)
+    :file-rev (:file-rev opts)
+    :objects (parse-handles (require-option opts :objects))}))
 
 (defn- run-insert
   [opts]
@@ -159,10 +185,9 @@
                       {:error :invalid-args})))
     (core/insert-objects!
      {:file (require-option opts :file)
-      :snapshot (require-option opts :snapshot)
+      :file-rev (:file-rev opts)
       :position (if before :before :after)
-      :anchor-id (:id (parse-handle (or before after)))
-      :anchor-hash (:hash (parse-handle (or before after)))
+      :anchor (parse-handle (or before after))
       :dry-run? (:dry-run? opts)
       :new-source (stdin-text)})))
 
@@ -171,20 +196,33 @@
   (let [empty? (:empty? opts)]
     (core/replace-objects!
      {:file (require-option opts :file)
-      :snapshot (require-option opts :snapshot)
-      :targets (parse-targets (require-option opts :targets))
+      :file-rev (:file-rev opts)
+      :targets (parse-handles (require-option opts :targets))
       :empty? empty?
       :dry-run? (:dry-run? opts)
       :new-source (when-not empty? (stdin-text))})))
 
-(defn- enrich-response
+(defn- mutation-diff
   [response opts]
-  (let [base (-> response
-                 (dissoc :before-text :after-text)
-                 (assoc :ok? true))]
-    (cond-> base
-      (and (:diff? opts) (contains? response :before-text))
-      (assoc :diff (unified-diff (:before-text response) (:after-text response))))))
+  (when (and (:diff? opts) (contains? response :before-text))
+    (unified-diff (:before-text response) (:after-text response))))
+
+(defn- mutation-json-response
+  [response opts]
+  (cond-> (-> response
+              (select-keys [:file :file-rev :changed? :touched :deleted :before :after])
+              (assoc :ok? true))
+    (:diff? opts)
+    (assoc :diff (or (mutation-diff response opts) ""))))
+
+(defn- emit-success!
+  [command response opts]
+  (cond
+    (#{"list" "get"} command)
+    (emit-json! *out* (assoc response :ok? true))
+
+    (#{"insert" "replace"} command)
+    (emit-json! *out* (mutation-json-response response opts))))
 
 (defn -main
   [& argv]
@@ -199,15 +237,13 @@
           (System/exit 0))
         (let [response (case command
                          "list" (run-list opts)
+                         "get" (run-get opts)
                          "insert" (run-insert opts)
                          "replace" (run-replace opts)
                          (throw (ex-info "Unknown command"
                                          {:error :invalid-args
-                                          :command command})))
-              response' (if (map? response)
-                          (enrich-response response opts)
-                          response)]
-          (emit-json! *out* response')
+                                          :command command})))]
+          (emit-success! command response opts)
           0))
       (catch Throwable t
         (emit-json! *err*
