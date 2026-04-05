@@ -1,7 +1,7 @@
 {:paths ["src" "test"]
  :bbin/bin
- {clj-objects {:main-opts ["-m" "mike.code-editor.cli/-main"]}}
+ {formpatch {:main-opts ["-m" "formpatch.cli/-main"]}}
  :tasks
- {clj-objects {:doc "Run the top-level object editor CLI"
-               :requires ([mike.code-editor.cli :as cli])
+ {formpatch {:doc "Run the Formpatch CLI"
+               :requires ([formpatch.cli :as cli])
                :task (System/exit (apply cli/-main *command-line-args*))}}}

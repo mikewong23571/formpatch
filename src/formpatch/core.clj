@@ -1,4 +1,4 @@
-(ns mike.code-editor.core
+(ns formpatch.core
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [rewrite-clj.node :as n]

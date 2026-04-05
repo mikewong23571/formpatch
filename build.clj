@@ -2,9 +2,9 @@
   (:refer-clojure :exclude [test])
   (:require [clojure.tools.build.api :as b]))
 
-(def lib 'net.clojars.mike/code-editor)
+(def lib 'io.github.mikewong23571/formpatch)
 (def version "0.1.0-SNAPSHOT")
-(def main 'mike.code-editor)
+(def main 'formpatch)
 (def class-dir "target/classes")
 
 (defn test "Run all the tests." [opts]

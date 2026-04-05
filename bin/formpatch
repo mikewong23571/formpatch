@@ -1,6 +1,6 @@
 #!/usr/bin/env bb
 
-(ns clj-objects
-  (:require [mike.code-editor.cli :as cli]))
+(ns formpatch-script
+  (:require [formpatch.cli :as cli]))
 
 (System/exit (apply cli/-main *command-line-args*))

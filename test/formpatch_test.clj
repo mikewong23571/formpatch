@@ -1,6 +1,6 @@
-(ns mike.code-editor-test
+(ns formpatch-test
   (:require [clojure.test :refer [deftest is testing]]
-            [mike.code-editor.core :as sut]))
+            [formpatch.core :as sut]))
 
 (def ^:private sample-source
   (str ";; header\n"
@@ -13,7 +13,7 @@
 (defn- temp-file
   [text]
   (let [dir (.toFile (java.nio.file.Files/createTempDirectory
-                      "code-editor-test-"
+                      "formpatch-test-"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
         file (java.io.File. dir "core.clj")]
     (spit file text)
@@ -179,7 +179,7 @@
     (is (false? (:readable? (last (:objects result)))))))
 
 (deftest list-objects-fails-for-missing-file
-  (let [missing (.getCanonicalPath (java.io.File. "/tmp/definitely-missing-code-editor-file.clj"))
+  (let [missing (.getCanonicalPath (java.io.File. "/tmp/definitely-missing-formpatch-file.clj"))
         error (try
                 (sut/list-objects missing)
                 nil

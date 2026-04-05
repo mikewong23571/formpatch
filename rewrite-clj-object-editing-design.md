@@ -253,7 +253,7 @@ For `insert` and `replace`:
 Example:
 
 ```bash
-clj-objects replace \
+formpatch replace \
   --file /abs/path/core.clj \
   --snapshot a91c2e7f \
   --targets 4:52de <<'EOF'
@@ -266,7 +266,7 @@ EOF
 Replacing one object with multiple top-level objects:
 
 ```bash
-clj-objects replace \
+formpatch replace \
   --file /abs/path/core.clj \
   --snapshot a91c2e7f \
   --targets 4:52de <<'EOF'
@@ -289,7 +289,7 @@ Deletion should not require an empty `stdin` body. Use an explicit flag.
 Example:
 
 ```bash
-clj-objects replace \
+formpatch replace \
   --file /abs/path/core.clj \
   --snapshot a91c2e7f \
   --targets 4:52de \

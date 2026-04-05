@@ -1,4 +1,4 @@
-# code-editor
+# formpatch
 
 Top-level object editor for Clojure source files.
 
@@ -16,19 +16,19 @@ The project is packaged as a `bbin`-installable Babashka tool via [`bb.edn`](./b
 Install from a local checkout:
 
 ```bash
-bbin install . --as clj-objects
+bbin install . --as formpatch
 ```
 
 After publishing the repository, install from git:
 
 ```bash
-bbin install io.github.<owner>/code-editor --as clj-objects
+bbin install io.github.mikewong23571/formpatch --as formpatch
 ```
 
 The tool entrypoint is declared in `:bbin/bin` and resolves to:
 
 ```bash
-bb -m mike.code-editor.cli/-main
+bb -m formpatch.cli/-main
 ```
 
 ## Commands
@@ -36,20 +36,20 @@ bb -m mike.code-editor.cli/-main
 Show usage:
 
 ```bash
-./bin/clj-objects --help
+./bin/formpatch --help
 ```
 
 List top-level objects in a file:
 
 ```bash
-./bin/clj-objects list --file src/mike/code_editor.clj
+./bin/formpatch list --file src/formpatch.clj
 ```
 
 Insert objects after an anchor:
 
 ```bash
-./bin/clj-objects insert \
-  --file src/mike/code_editor.clj \
+./bin/formpatch insert \
+  --file src/formpatch.clj \
   --snapshot abc12345 \
   --after 1:19ab7def <<'EOF'
 (defn helper-a
@@ -65,8 +65,8 @@ EOF
 Replace one object with multiple objects:
 
 ```bash
-./bin/clj-objects replace \
-  --file src/mike/code_editor.clj \
+./bin/formpatch replace \
+  --file src/formpatch.clj \
   --snapshot abc12345 \
   --targets 1:19ab7def <<'EOF'
 (defn helper
@@ -82,8 +82,8 @@ EOF
 Delete objects without `stdin`:
 
 ```bash
-./bin/clj-objects replace \
-  --file src/mike/code_editor.clj \
+./bin/formpatch replace \
+  --file src/formpatch.clj \
   --snapshot abc12345 \
   --targets 3:52de7abc \
   --empty
@@ -92,8 +92,8 @@ Delete objects without `stdin`:
 Preview a mutation without writing:
 
 ```bash
-./bin/clj-objects replace \
-  --file src/mike/code_editor.clj \
+./bin/formpatch replace \
+  --file src/formpatch.clj \
   --snapshot abc12345 \
   --targets 1:19ab7def \
   --dry-run \
@@ -134,13 +134,13 @@ clojure -T:build test
 Run the Babashka task wrapper:
 
 ```bash
-bb clj-objects --help
+bb formpatch --help
 ```
 
 Run the tool entrypoint exactly as `bbin` will invoke it:
 
 ```bash
-bb -m mike.code-editor.cli/-main --help
+bb -m formpatch.cli/-main --help
 ```
 
 ## Design Notes

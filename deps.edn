@@ -2,8 +2,8 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.4"}
         rewrite-clj/rewrite-clj {:mvn/version "1.2.51"}}
  :aliases
- {:run-m {:main-opts ["-m" "mike.code-editor"]}
-  :run-x {:ns-default mike.code-editor
+ {:run-m {:main-opts ["-m" "formpatch"]}
+  :run-x {:ns-default formpatch
           :exec-fn usage}
   :build {:deps {io.github.clojure/tools.build
                  {:mvn/version "0.10.12"}}

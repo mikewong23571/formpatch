@@ -1,8 +1,8 @@
-(ns mike.code-editor-cli-test
+(ns formpatch-cli-test
   (:require [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [mike.code-editor.core :as core]))
+            [formpatch.core :as core]))
 
 (def ^:private sample-source
   (str "(ns demo.core)\n\n"
@@ -14,7 +14,7 @@
 (defn- temp-file
   [text]
   (let [dir (.toFile (java.nio.file.Files/createTempDirectory
-                      "code-editor-cli-test-"
+                      "formpatch-cli-test-"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
         file (java.io.File. dir "core.clj")]
     (spit file text)
@@ -22,7 +22,7 @@
 
 (defn- run-cli
   [args & {:keys [in]}]
-  (let [cmd (into [(str (.getCanonicalPath (java.io.File. "bin/clj-objects")))] args)]
+  (let [cmd (into [(str (.getCanonicalPath (java.io.File. "bin/formpatch")))] args)]
     (apply shell/sh
            (concat cmd
                    [:dir (.getCanonicalPath (java.io.File. "."))]
@@ -30,7 +30,7 @@
 
 (defn- run-bb-main
   [args & {:keys [in]}]
-  (let [cmd (concat ["bb" "--classpath" "src" "-m" "mike.code-editor.cli/-main"]
+  (let [cmd (concat ["bb" "--classpath" "src" "-m" "formpatch.cli/-main"]
                     args)]
     (apply shell/sh
            (concat cmd

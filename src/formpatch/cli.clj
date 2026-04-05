@@ -1,17 +1,17 @@
-(ns mike.code-editor.cli
+(ns formpatch.cli
   (:require [babashka.process :as process]
             [cheshire.core :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [mike.code-editor.core :as core]))
+            [formpatch.core :as core]))
 
 (def ^:private usage-text
   (str/join
    "\n"
    ["Usage:"
-    "  clj-objects list --file PATH"
-    "  clj-objects insert --file PATH --snapshot SNAPSHOT (--before ID:HASH | --after ID:HASH) [--dry-run] [--diff] < forms.clj"
-    "  clj-objects replace --file PATH --snapshot SNAPSHOT --targets ID:HASH[,ID:HASH...] [--empty] [--dry-run] [--diff] < forms.clj"
+    "  formpatch list --file PATH"
+    "  formpatch insert --file PATH --snapshot SNAPSHOT (--before ID:HASH | --after ID:HASH) [--dry-run] [--diff] < forms.clj"
+    "  formpatch replace --file PATH --snapshot SNAPSHOT --targets ID:HASH[,ID:HASH...] [--empty] [--dry-run] [--diff] < forms.clj"
     ""
     "Notes:"
     "  - insert/replace read raw top-level forms from stdin"
@@ -119,8 +119,8 @@
 
 (defn- unified-diff
   [before after]
-  (let [before-file (temp-path "clj-objects-before-")
-        after-file (temp-path "clj-objects-after-")]
+  (let [before-file (temp-path "formpatch-before-")
+        after-file (temp-path "formpatch-after-")]
     (try
       (spit before-file before)
       (spit after-file after)
