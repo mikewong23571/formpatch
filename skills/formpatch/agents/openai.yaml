@@ -1,0 +1,4 @@
+interface:
+  display_name: "Formpatch"
+  short_description: "Edit Clojure files with Formpatch CLI"
+  default_prompt: "Use $formpatch to inspect and edit this Clojure file with the Formpatch CLI."
