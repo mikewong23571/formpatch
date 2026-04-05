@@ -1,0 +1,5 @@
+{:paths ["src" "test"]
+ :tasks
+ {clj-objects {:doc "Run the top-level object editor CLI"
+               :requires ([mike.code-editor.cli :as cli])
+               :task (System/exit (apply cli/-main *command-line-args*))}}}
