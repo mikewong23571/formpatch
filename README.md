@@ -9,6 +9,28 @@ The tool is designed for AI agents. It exposes each file as an ordered list of t
 
 The runtime path is `babashka`, so normal CLI usage does not pay JVM startup cost. `rewrite-clj` is used for parsing and validation.
 
+## Install As A bb Tool
+
+The project is packaged as a `bbin`-installable Babashka tool via [`bb.edn`](./bb.edn).
+
+Install from a local checkout:
+
+```bash
+bbin install . --as clj-objects
+```
+
+After publishing the repository, install from git:
+
+```bash
+bbin install io.github.<owner>/code-editor --as clj-objects
+```
+
+The tool entrypoint is declared in `:bbin/bin` and resolves to:
+
+```bash
+bb -m mike.code-editor.cli/-main
+```
+
 ## Commands
 
 Show usage:
@@ -113,6 +135,12 @@ Run the Babashka task wrapper:
 
 ```bash
 bb clj-objects --help
+```
+
+Run the tool entrypoint exactly as `bbin` will invoke it:
+
+```bash
+bb -m mike.code-editor.cli/-main --help
 ```
 
 ## Design Notes

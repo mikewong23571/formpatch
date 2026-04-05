@@ -1,4 +1,6 @@
 {:paths ["src" "test"]
+ :bbin/bin
+ {clj-objects {:main-opts ["-m" "mike.code-editor.cli/-main"]}}
  :tasks
  {clj-objects {:doc "Run the top-level object editor CLI"
                :requires ([mike.code-editor.cli :as cli])

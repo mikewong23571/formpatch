@@ -28,6 +28,15 @@
                    [:dir (.getCanonicalPath (java.io.File. "."))]
                    (when (some? in) [:in in])))))
 
+(defn- run-bb-main
+  [args & {:keys [in]}]
+  (let [cmd (concat ["bb" "--classpath" "src" "-m" "mike.code-editor.cli/-main"]
+                    args)]
+    (apply shell/sh
+           (concat cmd
+                   [:dir (.getCanonicalPath (java.io.File. "."))]
+                   (when (some? in) [:in in])))))
+
 (defn- contains-field?
   [s field value]
   (boolean
@@ -50,6 +59,14 @@
     (is (contains-string-field? out "name" "demo.core"))
     (is (contains-string-field? out "name" "alpha"))
     (is (contains-string-field? out "name" "beta"))))
+
+(deftest bb-main-entrypoint-works-like-installed-tool
+  (let [path (temp-file sample-source)
+        {:keys [exit out err]} (run-bb-main ["list" "--file" path])]
+    (is (zero? exit))
+    (is (str/blank? err))
+    (is (contains-field? out "ok" "true"))
+    (is (contains-string-field? out "name" "alpha"))))
 
 (deftest cli-insert-supports-dry-run-and-diff
   (let [path (temp-file sample-source)
