@@ -196,6 +196,54 @@
     (is (contains-field? (:err invalid) "ok" "false"))
     (is (contains-string-field? (:err invalid) "error" "invalid_handle"))))
 
+(deftest cli-insert-head-prepends-to-file
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (core/list-objects path)
+        first-object (first objects)
+        {:keys [exit out err]} (run-cli ["insert" "--file" path "--head"]
+                                        :in "(def prepended true)\n")]
+    (is (zero? exit))
+    (is (str/blank? err))
+    (is (contains-field? out "ok" "true"))
+    (is (contains-field? out "changed" "true"))
+    (is (contains-string-field? out "name" "prepended"))
+    (is (contains-string-field? out "oid" (:oid first-object)))
+    (is (str/starts-with? (slurp path) "(def prepended true)"))))
+
+(deftest cli-insert-tail-appends-to-file
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (core/list-objects path)
+        last-object (last objects)
+        {:keys [exit out err]} (run-cli ["insert" "--file" path "--tail"]
+                                        :in "(def appended true)\n")]
+    (is (zero? exit))
+    (is (str/blank? err))
+    (is (contains-field? out "ok" "true"))
+    (is (contains-field? out "changed" "true"))
+    (is (contains-string-field? out "name" "appended"))
+    (is (contains-string-field? out "oid" (:oid last-object)))
+    (is (str/ends-with? (slurp path) "(def appended true)\n"))))
+
+(deftest cli-insert-head-on-empty-file
+  (let [path (temp-file "")
+        {:keys [exit out err]} (run-cli ["insert" "--file" path "--head"]
+                                        :in "(ns foo.core)\n\n(def x 1)\n")]
+    (is (zero? exit))
+    (is (str/blank? err))
+    (is (contains-field? out "ok" "true"))
+    (is (contains-string-field? out "name" "foo.core"))
+    (is (= "(ns foo.core)\n\n(def x 1)\n" (slurp path)))))
+
+(deftest cli-insert-requires-exactly-one-position-flag
+  (let [path (temp-file sample-source)
+        no-flag (run-cli ["insert" "--file" path] :in "(def x 1)\n")
+        two-flags (run-cli ["insert" "--file" path "--head" "--tail"] :in "(def x 1)\n")]
+    (is (= 1 (:exit no-flag)))
+    (is (str/blank? (:out no-flag)))
+    (is (contains-field? (:err no-flag) "ok" "false"))
+    (is (= 1 (:exit two-flags)))
+    (is (contains-field? (:err two-flags) "ok" "false"))))
+
 (deftest cli-errors-on-file-rev-mismatch-and-rev-mismatch
   (let [path (temp-file sample-source)
         {:keys [file-rev objects]} (core/list-objects path)

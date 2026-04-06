@@ -4,7 +4,7 @@ Top-level object editor for Clojure source files.
 
 The tool is designed for AI agents. It exposes each file as an ordered list of top-level objects and supports two mutations:
 
-- `insert`: insert zero or more top-level objects before or after an existing object
+- `insert`: insert zero or more top-level objects before or after an existing object, or at the head/tail of the file
 - `replace`: replace one or more contiguous top-level objects with zero or more new objects
 
 The runtime path is `babashka`, so normal CLI usage does not pay JVM startup cost. `rewrite-clj` is used for parsing and validation.
@@ -84,6 +84,18 @@ Insert objects after an anchor:
   :b)
 EOF
 ```
+
+Insert at the head of the file (no anchor needed):
+
+```bash
+./bin/formpatch insert \
+  --file src/formpatch.clj \
+  --head <<'EOF'
+(ns foo.core)
+EOF
+```
+
+Use `--tail` to append at the end of the file. Both work on empty files.
 
 Replace one object with multiple objects:
 

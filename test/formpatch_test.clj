@@ -308,3 +308,50 @@
 
 (deftest parse-stdin-objects-allows-empty-source
   (is (= [] (sut/parse-stdin-objects ""))))
+
+(deftest insert-at-head-prepends-to-file
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (sut/list-objects path)
+        first-object (first objects)
+        result (sut/insert-objects!
+                {:file path
+                 :anchor nil
+                 :position :before
+                 :new-source "(def prepended true)\n"})]
+    (is (:changed? result))
+    (is (= ["prepended" "demo.core" "alpha" "beta"]
+           (mapv :name (:objects result))))
+    (is (= ["prepended"] (mapv :name (:touched result))))
+    (is (nil? (:before result)))
+    (is (= (:oid first-object) (:oid (:after result))))
+    (is (str/starts-with? (slurp path) "(def prepended true)"))))
+
+(deftest insert-at-tail-appends-to-file
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (sut/list-objects path)
+        last-object (last objects)
+        result (sut/insert-objects!
+                {:file path
+                 :anchor nil
+                 :position :after
+                 :new-source "(def appended true)\n"})]
+    (is (:changed? result))
+    (is (= ["demo.core" "alpha" "beta" "appended"]
+           (mapv :name (:objects result))))
+    (is (= ["appended"] (mapv :name (:touched result))))
+    (is (= (:oid last-object) (:oid (:before result))))
+    (is (nil? (:after result)))
+    (is (str/ends-with? (slurp path) "(def appended true)\n"))))
+
+(deftest insert-into-empty-file
+  (let [path (temp-file "")
+        result (sut/insert-objects!
+                {:file path
+                 :anchor nil
+                 :position :after
+                 :new-source "(ns foo.core)\n\n(def x 1)\n"})]
+    (is (:changed? result))
+    (is (= ["foo.core" "x"] (mapv :name (:objects result))))
+    (is (= ["foo.core" "x"] (mapv :name (:touched result))))
+    (is (nil? (:before result)))
+    (is (nil? (:after result)))))

@@ -393,12 +393,17 @@
     (apply-edit
      (assoc opts :file file :file-rev file-rev :dry-run? dry-run?)
      (fn [state]
-       (let [anchor-object (require-handle! state anchor)
-             objects (:objects state)
-             split-at (case position
-                        :before (:index anchor-object)
-                        :after (inc (:index anchor-object))
-                        (fail :invalid-position {:position position}))
+       (let [objects (:objects state)
+             split-at (if anchor
+                        (let [anchor-object (require-handle! state anchor)]
+                          (case position
+                            :before (:index anchor-object)
+                            :after (inc (:index anchor-object))
+                            (fail :invalid-position {:position position})))
+                        (case position
+                          :before 0
+                          :after (count objects)
+                          (fail :invalid-position {:position position})))
              before (subvec objects 0 split-at)
              after (subvec objects split-at)
              output (into [] (concat before new-objects after))]

@@ -11,7 +11,7 @@ Use `formpatch` as the default path for normal Clojure editing. It is a fast Bab
 
 - `list`: inspect top-level objects with truncated text previews
 - `get`: fetch one or more full top-level objects
-- `insert`: add one or more top-level objects before or after an anchor
+- `insert`: add one or more top-level objects before or after an anchor, or at the head/tail of the file
 - `replace`: replace one or more contiguous top-level objects with zero or more new top-level objects
 
 Use whole-object rewrites. Do not try to patch inside a form with this skill.
@@ -73,7 +73,7 @@ formpatch get \
 
 Insert new top-level forms with raw `stdin`.
 
-Insert after an object:
+Insert after an anchor object:
 
 ```bash
 formpatch insert \
@@ -94,6 +94,18 @@ EOF
 Remove `--dry-run --diff` to apply the edit.
 
 Use `--before` instead of `--after` when needed.
+
+Insert at the head of the file (no anchor needed):
+
+```bash
+formpatch insert \
+  --file src/foo/core.clj \
+  --head <<'EOF'
+(ns foo.core)
+EOF
+```
+
+Use `--tail` to append at the end of the file. Both `--head` and `--tail` work on empty files.
 
 Successful `insert` returns minimal delta JSON including:
 

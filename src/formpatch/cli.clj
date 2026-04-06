@@ -10,7 +10,7 @@
    ["Usage:"
     "  formpatch list --file PATH"
    "  formpatch get --file PATH --objects OID[@REV][,OID[@REV]...] [--file-rev FILE_REV]"
-    "  formpatch insert --file PATH [--file-rev FILE_REV] (--before OID[@REV] | --after OID[@REV]) [--dry-run] [--diff] < forms.clj"
+    "  formpatch insert --file PATH [--file-rev FILE_REV] (--before OID[@REV] | --after OID[@REV] | --head | --tail) [--dry-run] [--diff] < forms.clj"
     "  formpatch replace --file PATH [--file-rev FILE_REV] --targets OID[@REV][,OID[@REV]...] [--empty] [--dry-run] [--diff] < forms.clj"
     ""
     "Notes:"
@@ -18,8 +18,8 @@
     "  - get emits JSON with full object text for one or more objects"
     "  - oid is the stable object identity; optional @rev guards against overwriting a changed object"
     "  - --file-rev enables strict whole-file optimistic locking"
-    "  - insert/replace read raw top-level forms from stdin"
-    "  - insert/replace emit a minimal mutation delta JSON on stdout"
+    "  - insert reads raw top-level forms from stdin; use --head/--tail to insert without an anchor"
+    "  - replace reads raw top-level forms from stdin; insert/replace emit a minimal mutation delta JSON on stdout"
     "  - --diff includes a unified diff in the JSON response"
     "  - use --empty with replace to delete objects without stdin"
     "  - failures emit JSON on stderr and exit non-zero"]))
@@ -80,12 +80,14 @@
       (= arg "--help")
       (assoc opts :help? true)
 
-      (#{"--dry-run" "--diff" "--empty"} arg)
+      (#{"--dry-run" "--diff" "--empty" "--head" "--tail"} arg)
       (recur (assoc opts
                     (case arg
                       "--dry-run" :dry-run?
                       "--diff" :diff?
-                      "--empty" :empty?)
+                      "--empty" :empty?
+                      "--head" :head?
+                      "--tail" :tail?)
                     true)
              more)
 
@@ -179,15 +181,18 @@
 (defn- run-insert
   [opts]
   (let [before (:before opts)
-        after (:after opts)]
-    (when (= (boolean before) (boolean after))
-      (throw (ex-info "Exactly one of --before or --after is required"
+        after (:after opts)
+        head? (:head? opts)
+        tail? (:tail? opts)
+        n (count (filter identity [before after head? tail?]))]
+    (when (not= 1 n)
+      (throw (ex-info "Exactly one of --before, --after, --head, or --tail is required"
                       {:error :invalid-args})))
     (core/insert-objects!
      {:file (require-option opts :file)
       :file-rev (:file-rev opts)
-      :position (if before :before :after)
-      :anchor (parse-handle (or before after))
+      :position (if (or before head?) :before :after)
+      :anchor (when (or before after) (parse-handle (or before after)))
       :dry-run? (:dry-run? opts)
       :new-source (stdin-text)})))
 
