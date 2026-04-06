@@ -1,13 +1,13 @@
 ---
 name: formpatch
-description: Inspect and edit Clojure source files with the `formpatch` CLI. Use by default whenever Codex needs to inspect, create, update, or delete code in `.clj`, `.cljc`, or `.cljs` files and the work can be expressed as whole top-level object edits. Use it to list top-level objects, fetch full objects, insert new top-level forms, replace existing top-level forms, delete top-level forms, or explain the `oid` + optional `rev` + optional `file_rev` workflow used by Formpatch. Prefer this skill over manual text patches for normal Clojure editing unless the task specifically requires zipper-level internal surgery or another specialized refactor tool.
+description: Use the `formpatch` CLI for top-level Clojure object edits when the user explicitly wants Formpatch, when `formpatch` is already installed in the target environment, or when developing this repository itself. Prefer the installed `formpatch` command for other repositories; use `./bin/formpatch` only while working inside the Formpatch repo. Use it to list top-level objects, fetch full objects, insert new top-level forms, replace existing top-level forms, delete top-level forms, or explain the `oid` + optional `rev` + optional `file_rev` workflow used by Formpatch.
 ---
 
 # Formpatch
 
 ## Overview
 
-Use `formpatch` as the default path for normal Clojure editing. It is a fast Babashka CLI for top-level Clojure edits and treats a file as an ordered list of top-level objects. It supports:
+Use `formpatch` when Formpatch is the requested or available editing path for top-level Clojure edits. It is a fast Babashka CLI that treats a file as an ordered list of top-level objects. It supports:
 
 - `list`: inspect top-level objects with truncated text previews
 - `get`: fetch one or more full top-level objects
@@ -15,6 +15,12 @@ Use `formpatch` as the default path for normal Clojure editing. It is a fast Bab
 - `replace`: replace one or more contiguous top-level objects with zero or more new top-level objects
 
 Use whole-object rewrites. Do not try to patch inside a form with this skill.
+
+## Command Selection
+
+- When developing this repository, use the repo-local wrapper `./bin/formpatch`.
+- In other repositories, prefer the installed `formpatch` command and do not assume `./bin/formpatch` exists.
+- If Formpatch is not available in the target environment, fall back to the appropriate general editing tool instead of inventing a repo-local Formpatch path.
 
 ## Handle Model
 
@@ -158,10 +164,10 @@ Deletion returns the removed `oid`s in `deleted`.
 - Prefer `oid@rev` for writes. Bare `oid` is convenient, but it will not protect you from overwriting a changed target object.
 - Treat `oid` as file-local. Do not assume it is globally unique across files or repositories.
 - Use `--file-rev` only when you truly need strict whole-file locking; otherwise it reduces handle longevity.
-- Start with this skill for ordinary Clojure editing. Escalate to lower-level `rewrite-clj` work only when whole-object replacement is not sufficient.
+- Start with this skill only when Formpatch is the intended tool or is already available. Escalate to lower-level `rewrite-clj` work or another general editor when whole-object replacement is not sufficient or Formpatch is unavailable.
 - Keep edits at top-level object granularity. If only part of a function changes, still replace the full function.
 - Use `--dry-run --diff` before writing unless the change is trivial.
 - Pass raw top-level forms through `stdin`. Do not wrap replacement code in JSON strings.
 - Expect JSON on `stdout` for success and machine-readable JSON on `stderr` for failure.
 - After a mutation, prefer the returned `touched` / `before` / `after` handles over an immediate extra `list`.
-- When working inside this repository, prefer the repo-local entrypoint `./bin/formpatch`. Outside repo development, use the installed `formpatch` command when available.
+- When working inside this repository, prefer the repo-local entrypoint `./bin/formpatch`. Outside repo development, prefer the installed `formpatch` command and do not probe `./bin/formpatch` first.
