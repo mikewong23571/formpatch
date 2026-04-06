@@ -13,7 +13,7 @@ The runtime path is `babashka`, so normal CLI usage does not pay JVM startup cos
 
 Each top-level object has:
 
-- `oid`: stable object identity that survives ordinary edits
+- `oid`: stable file-local object identity encoded as a 6-character base62 token
 - `rev`: short hash of the current full object text
 - `file_rev`: short hash of the whole file
 
@@ -66,7 +66,7 @@ Fetch one or more full objects by handle:
 ```bash
 ./bin/formpatch get \
   --file src/formpatch.clj \
-  --objects oid_1234abcd5678ef901234abcd5678ef90,oid_abcdef0123456789abcdef0123456789@19ab7def
+  --objects 00000a,00000b@19ab7def
 ```
 
 Insert objects after an anchor:
@@ -74,7 +74,7 @@ Insert objects after an anchor:
 ```bash
 ./bin/formpatch insert \
   --file src/formpatch.clj \
-  --after oid_1234abcd5678ef901234abcd5678ef90@19ab7def <<'EOF'
+  --after 00000a@19ab7def <<'EOF'
 (defn helper-a
   []
   :a)
@@ -102,7 +102,7 @@ Replace one object with multiple objects:
 ```bash
 ./bin/formpatch replace \
   --file src/formpatch.clj \
-  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def <<'EOF'
+  --targets 00000a@19ab7def <<'EOF'
 (defn helper
   [x]
   (inc x))
@@ -118,7 +118,7 @@ Delete objects without `stdin`:
 ```bash
 ./bin/formpatch replace \
   --file src/formpatch.clj \
-  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def \
+  --targets 00000a@19ab7def \
   --empty
 ```
 
@@ -127,7 +127,7 @@ Preview a mutation without writing:
 ```bash
 ./bin/formpatch replace \
   --file src/formpatch.clj \
-  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def \
+  --targets 00000a@19ab7def \
   --dry-run \
   --diff <<'EOF'
 (defn preview []
@@ -141,7 +141,7 @@ Enable strict whole-file locking when needed:
 ./bin/formpatch replace \
   --file src/formpatch.clj \
   --file-rev abc12345 \
-  --targets oid_1234abcd5678ef901234abcd5678ef90@19ab7def \
+  --targets 00000a@19ab7def \
   --empty
 ```
 

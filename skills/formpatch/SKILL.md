@@ -20,7 +20,7 @@ Use whole-object rewrites. Do not try to patch inside a form with this skill.
 
 Each top-level object has:
 
-- `oid`: stable object identity that usually survives unrelated edits
+- `oid`: stable file-local object identity encoded as a 6-character base62 token
 - `rev`: short hash of the current full object text
 - `file_rev`: short hash of the whole file
 
@@ -54,7 +54,7 @@ formpatch list --file src/foo/core.clj
 Interpret the response as:
 
 - `file_rev`: current file version
-- `oid`: stable object identity
+- `oid`: stable file-local 6-character base62 identity
 - `rev`: optimistic lock for that object
 - `index`: current position in the file
 - `text`: truncated preview text
@@ -156,6 +156,7 @@ Deletion returns the removed `oid`s in `deleted`.
 ## Guardrails
 
 - Prefer `oid@rev` for writes. Bare `oid` is convenient, but it will not protect you from overwriting a changed target object.
+- Treat `oid` as file-local. Do not assume it is globally unique across files or repositories.
 - Use `--file-rev` only when you truly need strict whole-file locking; otherwise it reduces handle longevity.
 - Start with this skill for ordinary Clojure editing. Escalate to lower-level `rewrite-clj` work only when whole-object replacement is not sufficient.
 - Keep edits at top-level object granularity. If only part of a function changes, still replace the full function.

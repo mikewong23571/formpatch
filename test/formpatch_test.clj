@@ -49,7 +49,7 @@
            (mapv :name (:objects result))))
     (is (= ";; header\n(ns demo.core)"
            (:text (first (:objects result)))))
-    (is (every? #(re-matches #"oid_[0-9a-f]{32}" (:oid %))
+    (is (every? #(re-matches #"[0-9A-Za-z]{6}" (:oid %))
                 (:objects result)))
     (is (every? #(re-matches #"[0-9a-f]{8}" (:rev %))
                 (:objects result)))))
@@ -355,3 +355,69 @@
     (is (= ["foo.core" "x"] (mapv :name (:touched result))))
     (is (nil? (:before result)))
     (is (nil? (:after result)))))
+
+(deftest deleted-oids-are-not-reused
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (sut/list-objects path)
+        alpha (second objects)
+        inserted (sut/insert-objects!
+                  {:file path
+                   :anchor {:oid (:oid alpha) :rev (:rev alpha)}
+                   :position :after
+                   :new-source "(def helper :first)\n"})
+        helper (nth (:objects inserted) 2)
+        _ (sut/replace-objects!
+           {:file path
+            :targets [{:oid (:oid helper) :rev (:rev helper)}]
+            :empty? true})
+        reinserted (sut/insert-objects!
+                    {:file path
+                     :anchor {:oid (:oid alpha) :rev (:rev alpha)}
+                     :position :after
+                     :new-source "(def helper :second)\n"})
+        helper' (nth (:objects reinserted) 2)]
+    (is (= "helper" (:name helper')))
+    (is (not= (:oid helper) (:oid helper')))))
+
+(deftest new-oids-are-sequential-and-fixed-width
+  (let [path (temp-file sample-source)
+        {:keys [objects]} (sut/list-objects path)
+        alpha (second objects)
+        first-insert (sut/insert-objects!
+                      {:file path
+                       :anchor {:oid (:oid alpha) :rev (:rev alpha)}
+                       :position :after
+                       :new-source "(def helper-a :a)\n"})
+        helper-a (nth (:objects first-insert) 2)
+        second-insert (sut/insert-objects!
+                       {:file path
+                        :anchor {:oid (:oid helper-a) :rev (:rev helper-a)}
+                        :position :after
+                        :new-source "(def helper-b :b)\n"})
+        helper-b (nth (:objects second-insert) 3)]
+    (is (= ["000001" "000002" "000003"]
+           (mapv :oid objects)))
+    (is (= "000004" (:oid helper-a)))
+    (is (= "000005" (:oid helper-b)))
+    (is (every? #(= 6 (count %))
+                [(:oid helper-a) (:oid helper-b)]))))
+
+(deftest list-objects-rejects-invalid-next-oid-in-state-store
+  (let [path (temp-file sample-source)
+        _ (sut/list-objects path)
+        state-dir (java.io.File. (System/getProperty "formpatch.state-dir"))
+        state-file (first (seq (.listFiles state-dir)))]
+    (spit state-file
+          (pr-str {:version 2
+                   :file path
+                   :file-rev "deadbeef"
+                   :next-oid 0
+                   :objects []}))
+    (let [error (try
+                  (sut/list-objects path)
+                  nil
+                  (catch clojure.lang.ExceptionInfo ex
+                    (ex-data ex)))]
+      (is (= :identity-store-corrupt (:error error)))
+      (is (= path (:file error)))
+      (is (= "Invalid next oid counter" (:message error))))))

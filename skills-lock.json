@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "formpatch": {
+      "source": "/Users/mike/projs/main/formpatch/skills/formpatch",
+      "sourceType": "local",
+      "computedHash": "844dc3b6cc385dcd6037d96a854fb604b40d873f46101e04b02f6efe125258ac"
+    }
+  }
+}

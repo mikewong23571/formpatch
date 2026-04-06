@@ -97,7 +97,7 @@
     (is (contains-string-field? out "name" "alpha"))
     (is (contains-string-field? out "name" "beta"))
     (is (contains-field? out "text_truncated" "true"))
-    (is (str/includes? out "oid_"))
+    (is (contains-field? out "oid" "\"[0-9A-Za-z]{6}\""))
     (is (not (str/includes? out long-payload)))))
 
 (deftest cli-get-returns-full-objects

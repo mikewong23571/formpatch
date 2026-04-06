@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "formpatch",
+  "version": "1.0.0",
+  "description": "Formpatch skill for top-level Clojure form editing",
+  "owner": {
+    "name": "mikewong23571"
+  },
+  "plugins": [
+    {
+      "name": "formpatch",
+      "description": "Inspect and edit Clojure source files with the formpatch CLI",
+      "source": "./"
+    }
+  ]
+}
